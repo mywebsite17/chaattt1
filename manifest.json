@@ -1,12 +1,12 @@
 {
-  "name": "My CHAT App",
-  "short_name": "My CHAT App",
-  "description": "My CHAT App",
+  "name": "My_CHAT_App",
+  "short_name": "My_CHAT_App",
+  "description": "My_CHAT_App",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#ffffff",
-  "theme_color": "#8978ba",
+  "theme_color": "#3b82f6",
   "icons": [
     {
       "src": "./icon-192.png",

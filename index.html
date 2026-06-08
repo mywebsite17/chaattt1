@@ -266,7 +266,7 @@
     </script>
 
     <link rel="manifest" href="./manifest.json">
-    <meta name="theme-color" content="#8978ba">
+    <meta name="theme-color" content="#3b82f6">
     <link rel="apple-touch-icon" href="./icon-192.png">
     <script>
       if ('serviceWorker' in navigator) {
@@ -322,6 +322,7 @@
             <input type="file" id="file-upload" style="display:none;" multiple>
             <button style="background: var(--primary); color:white; font-size:18px; padding: 8px 14px; border-radius:6px; height: 45px;" onclick="document.getElementById('file-upload').click()" title="إرفاق ملف">📎</button>
             <button style="background: var(--purple); color:white; font-size:18px; padding: 8px 14px; border-radius:6px; height: 45px;" onclick="createNewTextFile()" title="حفظ المكتوب كملف نصي">📝</button>
+            <button style="background: var(--orange); color:white; font-size:18px; padding: 8px 14px; border-radius:6px; height: 45px;" onclick="createNewHTMLFile()" title="حفظ الكود كملف HTML مباشر">🌐</button>
             <textarea id="msg-input" placeholder="اكتب رسالتك، اسحب ملفاً، أو انسخ والصق أي صورة هنا..."></textarea>
             <button style="background: var(--accent); color:white; padding: 10px 20px; border-radius:6px; font-size: 14px; height: 45px;" id="send-btn">إرسال</button>
         </div>
@@ -339,8 +340,53 @@
         let isInitialLoad = true; 
         window.msgTexts = {}; 
         let safePassGlobal = "";
+        let currentFolderId = null; // تتبع المجلد الحالي لإنشاء الروابط الحية
 
         window.onload = () => {
+            // نظام اعتراض الرابط الحي (Live Link System)
+            const urlParams = new URLSearchParams(window.location.search);
+            const liveId = urlParams.get('live');
+            const folderParam = urlParams.get('f');
+            const roomParam = urlParams.get('r');
+
+            if (liveId && folderParam && roomParam) {
+                // إخفاء الواجهة وتحويل الصفحة لمستعرض حي
+                document.body.innerHTML = "<h2 style='text-align:center; color:#e0e0e0; margin-top:50px; font-family:sans-serif;'>جاري تحميل الموقع المباشر... ⏳</h2>";
+                document.body.style.backgroundColor = "#121212";
+
+                if (!firebase.apps.length) {
+                    firebase.initializeApp({
+                        apiKey: "AIzaSyCA8tjD2nzixDARhXApDLZrtDBIqJY_0I0",
+                        databaseURL: "https://myyppproject-default-rtdb.firebaseio.com",
+                        projectId: "myyppproject"
+                    });
+                }
+                const tempDb = firebase.database();
+                const path = folderParam === 'main'
+                    ? `rooms/${roomParam}/messages/${liveId}`
+                    : `rooms/${roomParam}/folders_data/${folderParam}/messages/${liveId}`;
+
+                tempDb.ref(path).once('value').then(snap => {
+                    const data = snap.val();
+                    if (data && data.url) {
+                        fetch(data.url)
+                            .then(res => res.text())
+                            .then(html => {
+                                document.open();
+                                document.write(html);
+                                document.close();
+                            })
+                            .catch(e => { document.body.innerHTML = "<h2 style='text-align:center; color:#e74c3c;'>❌ حدث خطأ أثناء قراءة الكود</h2>"; });
+                    } else {
+                        document.body.innerHTML = "<h2 style='text-align:center; color:#e74c3c;'>❌ الملف غير موجود أو تم حذفه</h2>";
+                    }
+                }).catch(e => {
+                    document.body.innerHTML = "<h2 style='text-align:center; color:#e74c3c;'>❌ تعذر الاتصال بقاعدة البيانات</h2>";
+                });
+                
+                return; // إيقاف باقي أكواد التحميل العادية الخاصة بالغرفة
+            }
+
             try {
                 const savedPass = localStorage.getItem('chat_pass');
                 if(savedPass) {
@@ -403,7 +449,6 @@
                     foldersArr.push({ id: childSnapshot.key, ...childSnapshot.val() });
                 });
 
-                // ترتيب المجلدات: المثبت أولاً، ثم حسب وقت الإنشاء
                 foldersArr.sort((a, b) => {
                     if (a.pinned && !b.pinned) return -1;
                     if (!a.pinned && b.pinned) return 1;
@@ -485,6 +530,7 @@
         }
 
         function openFolder(folderId, folderTitle) {
+            currentFolderId = folderId; // تحديث الـ ID لإنشاء الروابط
             if(roomRef) roomRef.off();
             document.getElementById('chat-title').innerText = folderTitle;
             document.getElementById('messages-list').innerHTML = "";
@@ -569,6 +615,50 @@
             reader.readAsDataURL(blob);
         }
 
+        function createNewHTMLFile() {
+            let fileContent = document.getElementById('msg-input').value.trim();
+            if (!fileContent) {
+                alert("يرجى كتابة كود الـ HTML في صندوق الكتابة أولاً!");
+                return;
+            }
+            const fileName = prompt("أدخل اسم ملف الـ HTML (بدون .html):", "index");
+            if (!fileName) return;
+            
+            const blob = new Blob([fileContent], { type: 'text/html;charset=utf-8' });
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                await roomRef.push({ 
+                    type: 'file', 
+                    name: fileName + '.html', 
+                    url: ev.target.result, 
+                    time: Date.now() 
+                });
+                document.getElementById('msg-input').value = "";
+                document.getElementById('msg-input').style.height = '45px';
+            };
+            reader.readAsDataURL(blob);
+        }
+
+        /* --- نظام إنشاء الروابط الحية --- */
+        function getLiveLinkUrl(id) {
+            const folder = currentFolderId ? currentFolderId : 'main';
+            const baseUrl = window.location.href.split('?')[0].split('#')[0];
+            return `${baseUrl}?live=${id}&f=${folder}&r=${safePassGlobal}`;
+        }
+
+        function copyLiveLink(id, btn) {
+            const link = getLiveLinkUrl(id);
+            navigator.clipboard.writeText(link).then(() => {
+                const old = btn.innerText;
+                btn.innerText = "تم النسخ! 🔗";
+                setTimeout(() => btn.innerText = old, 2000);
+            });
+        }
+
+        function openLiveLink(id) {
+            window.open(getLiveLinkUrl(id), '_blank');
+        }
+
         /* --- نظام رفع الملفات مع النسبة المئوية المتطور --- */
         async function handleFiles(files) {
             if (!files || files.length === 0) return;
@@ -586,7 +676,6 @@
                 await new Promise((resolve) => {
                     const reader = new FileReader();
                     
-                    // تحديث شريط التقدم أثناء قراءة الملف في الذاكرة (يمثل 40% من العملية)
                     reader.onprogress = (ev) => {
                         if (ev.lengthComputable) {
                             const percentLoaded = Math.round((ev.loaded / ev.total) * 40);
@@ -599,7 +688,6 @@
                         progressBar.style.width = '40%';
                         progressText.innerText = `جاري الرفع لقاعدة البيانات... 40%`;
                         
-                        // محاكاة بصرية لعملية الرفع الفعلي لقاعدة البيانات لغياب الدعم المباشر للـ Progress في Realtime DB (يمثل 60% المتبقية)
                         let fakeProgress = 40;
                         const interval = setInterval(() => {
                             if(fakeProgress < 95) { 
@@ -628,9 +716,8 @@
                             console.error("Upload error:", error);
                         }
                         
-                        // الانتظار قليلاً قبل الملف التالي أو الإخفاء
                         setTimeout(() => {
-                            progressBar.style.background = 'var(--accent)'; // إعادة اللون الأصلي
+                            progressBar.style.background = 'var(--accent)';
                             resolve();
                         }, 1000); 
                     };
@@ -639,7 +726,6 @@
                 });
             }
             
-            // إخفاء الشريط بعد انتهاء كل الملفات
             setTimeout(() => { 
                 progressContainer.style.display = 'none'; 
                 progressBar.style.width = '0%'; 
@@ -705,14 +791,12 @@
             }
         }
 
-        /* --- نظام الوسطاء (Proxies) المتعدد لتخطي حماية CORS --- */
         const proxyList = [
             (url) => 'https://corsproxy.io/?' + encodeURIComponent(url),
             (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
             (url) => 'https://thingproxy.freeboard.io/fetch/' + encodeURIComponent(url)
         ];
 
-        // دالة تجربة كل الوسطاء بالترتيب حتى تنجح العملية
         async function fetchContentWithMultiProxies(targetUrl) {
             for (let getProxyUrl of proxyList) {
                 try {
@@ -732,10 +816,8 @@
             try {
                 const originalText = btn.innerText;
                 btn.innerText = "جاري السحب ⏳...";
-                
                 const html = await fetchContentWithMultiProxies(urlMatch[0]);
                 await navigator.clipboard.writeText(html);
-                
                 btn.innerText = "تم النسخ! ✔️";
                 setTimeout(() => btn.innerText = originalText, 2500);
             } catch (error) {
@@ -749,8 +831,6 @@
             try {
                 const originalText = btn.innerText;
                 btn.innerText = "جاري السحب ⏳...";
-                
-                // هنا نحاول السحب المباشر أولاً (لو الملف مرفوع على فايربيس) ولو فشل نستخدم البروكسي
                 let textData;
                 try {
                     const directRes = await fetch(url);
@@ -759,15 +839,13 @@
                 } catch(e) {
                     textData = await fetchContentWithMultiProxies(url);
                 }
-                
                 await navigator.clipboard.writeText(textData);
-                
                 btn.innerText = "تم النسخ! ✔️";
                 setTimeout(() => btn.innerText = originalText, 2500);
             } catch (error) {
                 alert("❌ تعذر سحب محتوى الملف.\n" + error.message);
                 btn.innerText = "فشل ❌";
-                setTimeout(() => btn.innerText = "سحب ونسخ HTML 🔗", 2500);
+                setTimeout(() => btn.innerText = "سحب ونسخ الكود", 2500);
             }
         }
 
@@ -810,7 +888,11 @@
                         ${isLink ? `<button class="btn-html" onclick="fetchAndCopyHTML('${id}', this)">سحب ونسخ HTML 🔗</button>` : ''}
                     ` : ''}
                     ${d.type!=='text' ? `<a href="${d.url}" download="${d.name}"><button class="btn-down">تنزيل</button></a>` : ''}
-                    ${d.type==='file' ? (d.name.endsWith('.txt') ? `<button class="btn-copy" onclick="fetchAndCopyTextFile('${d.url}', this)">نسخ المحتوى 📋</button>` : `<button class="btn-html" onclick="fetchAndCopyFile('${d.url}', this)">سحب ونسخ HTML 🔗</button>`) : ''}
+                    ${d.type==='file' ? (
+                        d.name.endsWith('.txt') ? `<button class="btn-copy" onclick="fetchAndCopyTextFile('${d.url}', this)">نسخ المحتوى 📋</button>` : 
+                        d.name.endsWith('.html') ? `<button class="btn-html" onclick="copyLiveLink('${id}', this)">نسخ رابط Live 🔗</button><button class="btn-web" onclick="openLiveLink('${id}')">فتح Live 🌐</button><button class="btn-html" onclick="fetchAndCopyFile('${d.url}', this)">سحب ونسخ الكود</button>` : 
+                        `<button class="btn-html" onclick="fetchAndCopyFile('${d.url}', this)">سحب ونسخ HTML 🔗</button>`
+                    ) : ''}
                     <button class="btn-del" onclick="if(confirm('هل أنت متأكد من حذف هذه الرسالة؟')) roomRef.child('${id}').remove()">حذف</button>
                 </div><span class="msg-time">${msgTime}</span>`;
                 
@@ -818,7 +900,6 @@
                 list.appendChild(div); list.scrollTop = list.scrollHeight; playNotifSound();
             }, (error) => {
                 alert("⚠️ تعذر الاتصال بقاعدة البيانات!\nالتفاصيل: " + error.message);
-                // تمت إزالة كود تسجيل الخروج الإجباري للحفاظ على بقاء الحساب مفتوحاً
             });
             
             roomRef.on('child_removed', (s) => {
